@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # -*- coding: utf-8 -*-
 
 import urwid
@@ -9,10 +9,14 @@ from xfdown_api import XF
 
 class XFdownUi:
     palette = [
-        ('body',         'black',      'light gray', 'standout'),
-        ('header',       'black',      'light gray', 'standout'),
+        ('body',         '',      '', 'standout'),
+        ('header',       'light cyan', 'black', 'standout'),
         ('footer',       'light gray', 'black'),
-        ('button normal','light gray', 'dark blue', 'standout'),
+        ('button normal','dark green', '', 'standout'),
+        ('button waiting','', '', 'standout'),
+        ('button downloading','dark blue', '', 'standout'),
+        ('button checking','yellow', '', 'standout'),
+        ('button failed','dark red', '', 'standout'),
         ('button select','white',      'dark green'),
         ('button disabled','dark gray','dark blue'),
         ('exit',         'white',      'dark cyan'),
@@ -20,11 +24,12 @@ class XFdownUi:
         ('title',        'white',       'black',)
         ]
     footer_text = [
-      ('key', "UP"), ",", ('key', "DOWN"), "上下移动 ,",
+      ('key', "UP或K"), ",", ('key', "DOWN或J"), "上下移动 ,",
       ('key', "SPACE"), "选择项目 ,",
-      ('key', "ENTER"), "下载选中项 ,", ('key', "O"),
-      "在线播放 ,",
-      ('key', "Ctrl+C"), " 退出",
+      ('key', "ENTER"), "下载项目 ,",
+      ('key', "D"),     "删除项目 ,",
+      ('key', "O"),     "在线播放 ,",
+      ('key', "Q"),     " 退出",
     ]
         
     def create_checkbox(self, g=None, name='', font=None, fn=None):
@@ -36,8 +41,13 @@ class XFdownUi:
         # ListBox
         l = []
         self.items = []
-        j = xf.getlist()
-        for size ,percent,name in j:
+        try:
+            j = xf.getlist()
+        except:
+            xf.Login(True)
+            j = xf.getlist()
+
+        for size,percent,name,status,tasktype,fileurl in j:
             w = self.create_checkbox()
             self.items.append(w)
             w = urwid.Columns( [('fixed', 4, w), 
@@ -45,7 +55,17 @@ class XFdownUi:
                 ('fixed',6,urwid.Text(percent+'%', align='right')),
                 urwid.Text(name)],1)
 
-            w = urwid.AttrWrap(w, 'button normal', 'button select')
+            if status == 12:
+                w = urwid.AttrWrap(w, 'button normal', 'button select')
+            elif status == 5:
+                w = urwid.AttrWrap(w, 'button waiting', 'button select')
+            elif status == 6:
+                w = urwid.AttrWrap(w, 'button downloading', 'button select')
+            elif status == 8:
+                w = urwid.AttrWrap(w, 'button checking', 'button select')
+            elif status == 7:
+                w = urwid.AttrWrap(w, 'button failed', 'button select')
+
             l.append(w)
 
         w = urwid.ListBox(urwid.SimpleListWalker(l))
@@ -79,13 +99,22 @@ class XFdownUi:
 
 
     def input_filter(self,key,raw):
-      if key in (['enter'],['o']):
+      if key in (['enter'],['o'],['d']):
         self.selected=self.getSelected()
         if self.selected == []:
           self.setMsg("没有选中项目")
           return 
         self.key=key
         raise urwid.ExitMainLoop()
+      elif key==['q']:
+        self.key=key
+        raise urwid.ExitMainLoop()
+      elif key in (['j'],['k']):
+        if key==['j']:
+	  key=['down']
+        elif key==['k']:
+	  key=['up']
+	return key
       else:
         return key
     def main(self):
@@ -98,9 +127,14 @@ class XFdownUi:
     def work(self):
       if self.key==['enter']:
         xf.download(self.getSelected())
+      elif self.key==['d']:
+        xf.deltask(self.getSelected())
+        self.main()
       elif self.key==['o']:
         xf.online_v(self.getSelected())
-    
+      elif self.key==['q']:
+        print (" exit now.")
+        exit(0)
     
 if '__main__'==__name__:
   def usage():

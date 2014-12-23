@@ -1,12 +1,14 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # -*- coding: utf-8 -*-
 from __future__ import division
 import cPickle as pickle
 import socket
+import os, sys, stat
+cachefile=os.path.expanduser('~/.xfdown.cache')
 
 origGetAddrInfo = socket.getaddrinfo
 try:
-  with open("cache.dat", "rb") as f:
+  with open(cachefile, "rb") as f:
     dnscache=pickle.load(f)
 except:
   dnscache={}
@@ -17,7 +19,7 @@ def getAddrInfoWrapper(host, port, family=0, socktype=0, proto=0, flags=0):
   else:
     dns=origGetAddrInfo(host, port, family, socktype, proto, flags)
     dnscache[host]=dns
-    pickle.dump(dnscache, open("cache.dat", "wb") , True)
+    pickle.dump(dnscache, open(cachefile, "wb") , True)
     return dns
 
 socket.getaddrinfo = getAddrInfoWrapper
@@ -90,8 +92,9 @@ class LWPCookieJar(cookiejar.LWPCookieJar):
 class XF:
     _player="totem"
 
-    __cookiepath = '%s/cookie'%module_path
-    __verifyimg  = '%s/verify.jpg'%module_path
+    __cookiepath = os.path.expanduser('~/.xfdown.cookie')
+    __configpath = os.path.expanduser('~/.xfdown.config')
+    __verifyimg  = os.path.expanduser('~/.xfdown.verify.jpg')
     __RE=re.compile("(\d+) *([^\d ]+)?")
 
 
@@ -111,7 +114,7 @@ class XF:
         self.gethttp(lists)
         cmds=[]
         for i in lists:
-            cmd=['aria2c', '-c', '-s10', '-x10', '--header', 'Cookie:ptisp=edu; FTN5K=%s'%self.filecom[i], '%s'%self.filehttp[i]]
+            cmd=['aria2c', '-c', '-s10', '-x10', '--header', 'Cookie: FTN5K=%s'%self.filecom[i], '%s'%self.filehttp[i]]
 
             cmds.append(cmd)
 
@@ -162,7 +165,7 @@ class XF:
         request.install_opener(opener)
         
         if not cookieload:
-            self.__Login(True)
+            self.Login(True)
     def __request(self,url,data=None,savecookie=False):
         """
             请求url
@@ -207,6 +210,22 @@ class XF:
             
         return verify
 
+    def __load_config(self):
+
+        os.chmod(self.__configpath , stat.S_IREAD|stat.S_IWRITE)
+        config_file=open(self.__configpath)
+        config=json.load(config_file)
+        return config
+
+
+    def __save_config(self):
+        self.__load_config()
+        config={"qq":self.__qq, "password":self.pswd}
+        config_file=open(self.__configpath,"w")
+        json.dump(config,config_file)
+        config_file.close()
+        os.chmod(self.__configpath , stat.S_IREAD|stat.S_IWRITE)
+
 
     def __request_login(self):
 
@@ -214,17 +233,18 @@ class XF:
         str = self.__request(url = urlv)
         if str.find(_('登录成功')) != -1:
             self.__getlogin()
+            self.__save_config()
             return True
         elif str.find(_('验证码不正确')) != -1:
             self.__getverifycode()
-            self.__Login(False,True)
+            self.Login(False,True)
         elif str.find(_('不正确')) != -1:
             _print('你输入的帐号或者密码不正确，请重新输入。')
-            self.__Login(True)
+            self.Login(True)
         else:
             #print('登录失败')
             _print(str)
-            self.__Login(True)
+            self.Login(True)
 
     def getfilename_url(self,url):
         url=url.strip()
@@ -237,7 +257,7 @@ class XF:
             filename=url.split("/")[-1]
         return filename.split("?")[0]
     def __getlogin(self):
-        self.__request(url ="http://lixian.qq.com/handler/lixian/check_tc.php",data={},savecookie=True)
+        self.__request(url ="http://lixian.qq.com/handler/log_handler.php",data={'cmd': 'stat'},savecookie=True)
         urlv = 'http://lixian.qq.com/handler/lixian/do_lixian_login.php'
         f=open(self.__cookiepath)
         fi = re.compile('skey="([^"]+)"')
@@ -251,30 +271,31 @@ class XF:
             得到任务名与hash值
             """
             urlv = 'http://lixian.qq.com/handler/lixian/get_lixian_items.php'
-            res = self.__request(urlv, {'page': 0, 'limit': 500})
+            res = self.__request(urlv, {'page': 0, 'limit': 200})
             res = json.JSONDecoder().decode(res)
             result = []
             if res["msg"]==_('未登录!'):
                 res=json.JSONDecoder().decode(self.__getlogin())
                 if res["msg"]==_('未登录!'):
-                    self.__Login()
+                    self.Login()
                 else:
                     return self.getlist()
-            elif not res["data"]:
-                _print('无离线任务!')
-                self.__addtask()
-                self.main()
             else:
                 self.filename = []
                 self.filehash = []
                 self.filemid = []
-                res['data'].sort(key=lambda x: x["file_name"])
+                if not res["data"]:
+                    return result
+                #res['data'].sort(key=lambda x: x["file_name"])
                 # _print ("序号\t大小\t进度\t文件名")
                 for num in range(len(res['data'])):
                     index=res['data'][num]
                     self.filename.append(index['file_name'].encode("u8"))
                     self.filehash.append(index['hash'])
                     size=index['file_size']
+                    status=index['dl_status']
+                    fileurl=index['file_url']
+                    tasktype=index['task_type']
                     self.filemid.append(index['mid'])
                     if size==0:
                         percent="-0"
@@ -289,7 +310,7 @@ class XF:
                         else:
                             break
                     size="%.1f%s"%(size,_dw)
-                    item=(size,percent,_(self.filename[num]))
+                    item=(size,percent,_(self.filename[num]),status,tasktype,fileurl)
                     result.append(item)
             return result
 
@@ -307,29 +328,14 @@ class XF:
         self.filecom[num]=(re.search(r'\"com_cookie":\"(.+?)\"\,\"',str).group(1))
        
 
-    def __deltask(self):
-        _print ("请输入要删除的任务序号,数字之间用空格,逗号或其他非数字字符号分割.\n输入A删除所有任务:")
-        target=raw_input("dt # ").strip()
-        if target.upper()=="A":
-            lists=zip(range(1,len(self.filehash)+1) , ['']* len(self.filehash))
-        elif '-' in target:
-            nums = []
-            for i in target.split():
-                ran = target.split('-')
-                nums.extend(range(int(ran[0]),int(ran[1])+1))
-            lists = zip(nums , [''] * len(nums))
-        else:
-            lists=self.__RE.findall(target)
-        if lists==[]:
-            _print ("选择为空.")
-            self.__chosetask()
+    def deltask(self,lists):
         urlv = 'http://lixian.qq.com/handler/lixian/del_lixian_task.php'
 
         for i in lists:
-            num=int(i[0])-1
-            data={'mids':self.filemid[num]}
-            self.__request(urlv,data)
-        _print("任务删除完成")
+            data={'mids':self.filemid[i]}
+            ret=json.loads(self.__request(urlv,data))
+            if ret['ret']== -1:
+                self.Login()
 
                     
     def __addtask(self):
@@ -345,17 +351,13 @@ class XF:
 
 
                     
-    def __Login(self,needinput=False,verify=False):
+    def Login(self,needinput=False,verify=False):
         if not needinput and not verify:
-            try:
-                f=open(self.__cookiepath)
-                line=f.readlines()[1].strip()
-                lists=line.split("#")
-                self.__qq=lists[1]
-                self.hashpasswd=lists[2]
-            finally:
-                f.close()
-        if not hasattr(self,"hashpasswd") or needinput:
+            if os.path.isfile(self.__configpath):
+                config=self.__load_config()
+                self.__qq=config['qq']
+                self.pswd=config['password']
+        if not hasattr(self,"pswd") or needinput:
             self.__qq = raw_input('QQ：')
             import getpass
             self.pswd= getpass.getpass('PASSWD: ')
